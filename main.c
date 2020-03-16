@@ -4,13 +4,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+// The following variable checks whether the parent process will wait for the child to finish or not.
+/*
+	1: wait for child (default)
+	0: don't wait for child
+*/
+int wait_for_child = 1;		 
 
 /*
   Function Declarations for builtin shell commands:
  */
-int lsh_cd(char **args);
-int lsh_help(char **args);
-int lsh_exit(char **args);
+int shell_pwd(char **args);
+int shell_cd(char **args);
+int shell_help(char **args);
+int shell_exit(char **args);
 void shell_loop(void);
 char *shell_read_line(void);
 char **shell_split_line(char*);
@@ -21,52 +28,68 @@ int shell_launch();
   List of builtin commands, followed by their corresponding functions.
  */
 char *builtin_str[] = {
-  "cd",
-  "help",
-  "exit"
+  "cd",					// <- change current directory
+  "help",				// <- provide the manual of the shell
+  "exit",				// <- exit the shell
+  "pwd"					// <- print working directory
 };
 
 int (*builtin_func[]) (char **) = {
-  &lsh_cd,
-  &lsh_help,
-  &lsh_exit
+  &shell_cd,
+  &shell_help,
+  &shell_exit,
+  &shell_pwd
 };
 
-int lsh_num_builtins() {
+// Returns the number of built in commands
+int shell_builtins_size() {
   return sizeof(builtin_str) / sizeof(char *);
 }
 
 /*
   Builtin function implementations.
 */
-int lsh_cd(char **args)
+
+// Prints current directory
+int shell_pwd(char **args){
+
+	char cwd[1024];
+    getcwd(cwd, sizeof(cwd));
+
+	printf("%s\n", cwd);
+
+	return 1;
+}
+
+// Changes current directory
+int shell_cd(char **args)
 {
   if (args[1] == NULL) {
-    fprintf(stderr, "lsh: expected argument to \"cd\"\n");
+    fprintf(stderr, "Shell: expected argument to \"cd\"\n");
   } else {
     if (chdir(args[1]) != 0) {
-      perror("lsh");
+      perror("Shell");
     }
   }
   return 1;
 }
 
-int lsh_help(char **args)
+// Provides the manual for the shell
+int shell_help(char **args)
 {
   int i;
-  printf("\t\t\t~~~ Welcome to the KUKA SHELL ~~~\n");
-  printf("+ Type program names and arguments, and hit enter.\n");
+  printf("\t\t\t~~~ Welcome to my Simple SHELL ~~~\n");
   printf("+ The following are built in commands:\n");
 
-  for (i = 0; i < lsh_num_builtins(); i++) {
+  for (i = 0; i < shell_builtins_size(); i++) {
     printf(" -> %s\n", builtin_str[i]);
   }
 
-  printf("+ Use the man command for information on other programs.\n");
   return 1;
 }
 
-int lsh_exit(char **args)
+// Exits the shell
+int shell_exit(char **args)
 {
   return 0;
 }
@@ -82,9 +105,9 @@ void shell_loop(void){
     getcwd(cwd, sizeof(cwd));
 
 		printf("%s> ", cwd);
-		line = shell_read_line();
-		args = shell_split_line(line);
-		status = shell_execute(args);
+		line = shell_read_line();			// Retrieve the line entered by the user
+		args = shell_split_line(line);		// split the line into arguments
+		status = shell_execute(args);		// execute the command and return the status of execution
 
 		free(line);
 		free(args);
@@ -92,16 +115,17 @@ void shell_loop(void){
 	}while(status);
 }
 
+// Executes the command
 int shell_execute(char **args)
 {
-  int i;
 
+  // If nothing is entered 
   if (args[0] == NULL) {
-    // An empty command was entered.
     return 1;
   }
 
-  for (i = 0; i < lsh_num_builtins(); i++) {
+  // Loop through all the built in commands
+  for (int i = 0; i < shell_builtins_size(); i++) {
     if (strcmp(args[0], builtin_str[i]) == 0) {  // <- Check if the command entered is a built in command
       return (*builtin_func[i])(args);
     }
@@ -114,7 +138,7 @@ char *shell_read_line(void){
 	char *line = NULL;
 	ssize_t bufsize = 0;
 
-	getline(&line, &bufsize, stdin);
+	getline(&line, &bufsize, stdin);	// <- Retrieves the line entered by the user
 	return line;
 }
 
@@ -131,12 +155,31 @@ char **shell_split_line(char *line){
 		exit(EXIT_FAILURE);
 	}
 
+	// Split the line into pieces and store each piece into var token
 	token = strtok(line, SHELL_TOKEN_DELIM);
 
+	// Loop through each piece
 	while(token != NULL){
-		tokens[position] = token;
+		
+		// Check for special characters in the argument
+		if(*token == EOF){
+			exit(EXIT_SUCCESS);
+		}else if(*token == '\n'){
+			tokens[position] = '\0';
+			wait_for_child = 1;
+			return tokens;
+		}else if(*token == '&'){
+			wait_for_child = 0;
+			tokens[position] = '\0';
+		}else {
+			tokens[position] = token;
+			wait_for_child = 1;
+		}
+
+
 		position++;
 
+		// Checks if the line entered is greater than the size of the buffer and if yes, allocate more memory
 		if(position >= bufsize){
 			bufsize += SHELL_TOKEN_BUFSIZE;
 			tokens = realloc(tokens, bufsize * sizeof(char*));
@@ -170,24 +213,22 @@ int shell_launch(char **args){
 		// Error creating process
 		perror("Shell");
 	}else {
-		// Parent process
-		do {
-      		wpid = waitpid(pid, &status, WUNTRACED);          // wait till the child process finishes
-    	} while (!WIFEXITED(status) && !WIFSIGNALED(status));
 
+		// If the flag is on, then wait for the child to finish.	
+		if(wait_for_child == 1){
+				// Parent process
+			do {
+	      		wpid = waitpid(pid, &status, WUNTRACED);          // wait till the child process finishes
+	    	} while (!WIFEXITED(status) && !WIFSIGNALED(status));
+		}
 	}
 
 	return 1;
 }
 
 int main(int argc, char **argv){
-	
-	// Load config files
 
-	// Run command loop
 	shell_loop();
-
-	// Perform any shutdown/cleanup
 
 	return 0;
 }
